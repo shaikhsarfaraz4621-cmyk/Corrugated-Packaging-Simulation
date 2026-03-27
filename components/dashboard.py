@@ -54,19 +54,29 @@ def render_flow_dynamics(results):
     c_left, c_right = st.columns(2)
     with c_left:
         st.subheader("📦 WIP Backpressure (Queue)")
-        if "Run_ID" in results["WIP_Timeline"].columns and len(results["WIP_Timeline"]["Run_ID"].unique()) > 1:
-            run_opts_wip = ["All Runs Overlay"] + results["WIP_Timeline"]["Run_ID"].unique().tolist()
-            sel_run_wip = st.selectbox("Select Run for WIP Chart:", run_opts_wip)
-            
-            if sel_run_wip == "All Runs Overlay":
-                fig_wip = px.line(results["WIP_Timeline"], x="Time", y="WIP", color="Run_ID", title="Cumulative Batches (All Runs)", line_shape='hv')
-                fig_wip.update_traces(opacity=0.6)
+        if "Run_ID" in results["WIP_Timeline"].columns:
+            sel_run_wip = st.selectbox("Filter WIP Chart by Run:", ["All Runs"] + list(results["WIP_Timeline"]["Run_ID"].unique()), key="dashboard_wip_run")
+            if sel_run_wip == "All Runs":
+                wip_render_df = results["WIP_Timeline"]
+                fig_wip = px.line(wip_render_df, x="Time", y="Global_WIP", color="Run_ID", title="Cumulative Batches (All Runs)", line_shape='hv')
             else:
-                wdf = results["WIP_Timeline"][results["WIP_Timeline"]["Run_ID"] == sel_run_wip]
-                fig_wip = px.area(wdf, x="Time", y="WIP", title=f"Cumulative Batches ({sel_run_wip})", line_shape='hv', color_discrete_sequence=['#3b82f6'])
+                wip_render_df = results["WIP_Timeline"][results["WIP_Timeline"]["Run_ID"] == sel_run_wip]
+                fig_wip = px.area(wip_render_df, x="Time", y="Global_WIP", title=f"Cumulative Batches ({sel_run_wip})", line_shape='hv', color_discrete_sequence=['#3b82f6'])
+            st.plotly_chart(fig_wip, use_container_width=True)
         else:
-            fig_wip = px.area(results["WIP_Timeline"], x="Time", y="WIP", title="Cumulative Batches in Transit", line_shape='hv', color_discrete_sequence=['#3b82f6'])
-        st.plotly_chart(fig_wip, use_container_width=True)
+            wip_render_df = results["WIP_Timeline"]
+            fig_wip = px.area(wip_render_df, x="Time", y="Global_WIP", title="Cumulative Batches in Transit", line_shape='hv', color_discrete_sequence=['#3b82f6'])
+            st.plotly_chart(fig_wip, use_container_width=True)
+            
+        # Top 3 WIP Contributors
+        m_cols = [c for c in wip_render_df.columns if c not in ['Time', 'Global_WIP', 'Run', 'Run_ID', 'WIP']]
+        if len(m_cols) > 0:
+            st.markdown("<br>🔥 **Top 3 WIP Queue Offenders (Bottlenecks):**", unsafe_allow_html=True)
+            st.caption("Average number of batches physically waiting in the queue buffer.")
+            q_sums = wip_render_df[m_cols].mean().sort_values(ascending=False).head(3)
+            cc = st.columns(3)
+            for i, (m, val) in enumerate(q_sums.items()):
+                cc[i].metric(label=f"#{i+1} Bottleneck", value=f"{round(val, 1)}", delta=f"{m}", delta_color="off")
         
     with c_right:
         st.subheader("⏳ Machine Status Timeline")

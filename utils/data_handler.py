@@ -59,3 +59,16 @@ def handle_file_upload(uploaded_file):
         st.success("✅ Configuration Loaded!")
     except Exception as e:
         st.error(f"Error reading file: {e}")
+
+def fill_dataframe_defaults(df, table_type):
+    """Silent fail-safe recovery for nulls in Streamlit DataFrames."""
+    defaults = {
+        'machines': {'Count': 1, 'Input_Buffer_Capacity': 5, 'Jam_Weibull_Alpha': 1.5, 'Jam_Weibull_Beta': 0.0, 'Repair_Lognormal_Mu': 10.0, 'Repair_Lognormal_Sigma': 0.0},
+        'jobs': {'Target_Demand': 1000, 'Batch_Size': 1000, 'Interarrival_Min': 2.0, 'Interarrival_Max': 5.0},
+        'routings': {'Sequence_Order': 1, 'Process_Time_Per_Unit': 0.01, 'Setup_Time_Base': 5.0, 'Setup_Time_Std': 1.0, 'Requires_Forklift': False}
+    }
+    if table_type in defaults:
+        for col, val in defaults[table_type].items():
+            if col in df.columns:
+                df[col] = df[col].fillna(val)
+    return df

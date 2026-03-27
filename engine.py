@@ -83,7 +83,13 @@ class CorrugatedSimulation:
 
     def change_wip(self, delta):
         self.current_wip += delta
-        self.wip_timeline.append({"Time": self.env.now, "WIP": self.current_wip})
+        self.log_queues()
+        
+    def log_queues(self):
+        if not hasattr(self, 'buffers') or not self.buffers:
+            return
+        q_sizes = {m: len(buf.items) for m, buf in self.buffers.items()}
+        self.wip_timeline.append({"Time": self.env.now, "Global_WIP": self.current_wip, **q_sizes})
         
     def setup_factory(self):
         # 1. Setup global forklift (Logistics)
@@ -193,6 +199,7 @@ class CorrugatedSimulation:
                 # This guarantees that if the downstream machine is busy, the batches stay in the physical buffer on the floor, 
                 # strictly saturating the WIP capacity and mathematically triggering a 'Blocked' state upstream!
                 yield self.buffers[m_id].get()
+                self.log_queues()
                 
                 unit_label = f"{m_id}_u1"
                 
@@ -234,6 +241,7 @@ class CorrugatedSimulation:
                     
                     # Put it into next machine's input buffer (will wait if buffer full)
                     yield self.buffers[next_m_id].put(batch_id)
+                    self.log_queues()
                     
                     block_dur = self.env.now - start_block
                     self.change_machine_state(m_id, "Blocked", -1)
@@ -278,6 +286,7 @@ class CorrugatedSimulation:
             
             # Must put into the first machine's queue before processing
             yield self.buffers[first_machine].put(batch_id)
+            self.log_queues()
             self.env.process(self.process_job_batch(job_type, batch_id=batch_id))
             
             # Delay arrival slightly to mimic realistic warehouse forklift transit times

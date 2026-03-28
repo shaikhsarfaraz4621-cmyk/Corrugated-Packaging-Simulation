@@ -121,8 +121,15 @@ tools_schema = [
 
 def get_deepseek_response(prompt, context, machines_df, jobs_df, routings_df):
     try:
-        api_key = st.secrets.get("DEEPSEEK_API_KEY")
-        if not api_key: return "❌ No API key found in Streamlit Secrets."
+        # Robust lookup: secrets.toml, then environment variable
+        api_key = None
+        if "DEEPSEEK_API_KEY" in st.secrets:
+            api_key = st.secrets["DEEPSEEK_API_KEY"]
+        elif os.environ.get("DEEPSEEK_API_KEY"):
+            api_key = os.environ.get("DEEPSEEK_API_KEY")
+            
+        if not api_key: 
+            return "❌ No API key found. Please ensure 'DEEPSEEK_API_KEY' is set in .streamlit/secrets.toml or as an Environment Variable."
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
         sys_msgs = [{"role": "system", "content": context}]

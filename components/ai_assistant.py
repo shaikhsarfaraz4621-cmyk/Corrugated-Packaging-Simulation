@@ -1,6 +1,7 @@
 import streamlit as st
 from openai import OpenAI
 import pandas as pd
+import os
 
 def get_ai_context(results, machines_df):
     total_time = results.get("Total_Time", 0)

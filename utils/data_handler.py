@@ -47,6 +47,9 @@ def initialize_session_state():
         ]
         st.session_state['routings_df'] = pd.DataFrame(routings)
 
+    if 'num_runs' not in st.session_state:
+        st.session_state['num_runs'] = 3
+
 def handle_file_upload(uploaded_file):
     try:
         xl = pd.ExcelFile(uploaded_file)
@@ -60,13 +63,22 @@ def handle_file_upload(uploaded_file):
     except Exception as e:
         st.error(f"Error reading file: {e}")
 
-def fill_dataframe_defaults(df, table_type):
-    """Silent fail-safe recovery for nulls in Streamlit DataFrames."""
+def fill_dataframe_defaults(df, table_type, old_df=None):
+    """Fail-safe recovery for nulls:
+    1. Reverts to previous value (old_df) if available.
+    2. Falls back to hardcoded defaults for new rows.
+    """
     defaults = {
         'machines': {'Count': 1, 'Input_Buffer_Capacity': 5, 'Jam_Weibull_Alpha': 1.5, 'Jam_Weibull_Beta': 0.0, 'Repair_Lognormal_Mu': 10.0, 'Repair_Lognormal_Sigma': 0.0},
         'jobs': {'Target_Demand': 1000, 'Batch_Size': 1000, 'Interarrival_Min': 2.0, 'Interarrival_Max': 5.0},
         'routings': {'Sequence_Order': 1, 'Process_Time_Per_Unit': 0.01, 'Setup_Time_Base': 5.0, 'Setup_Time_Std': 1.0, 'Requires_Forklift': False}
     }
+    
+    # Stage 1: Fill any NaNs with the previous value from old_df
+    if old_df is not None:
+        df = df.fillna(old_df)
+        
+    # Stage 2: If still NaN (e.g. new row added), use hardcoded defaults
     if table_type in defaults:
         for col, val in defaults[table_type].items():
             if col in df.columns:

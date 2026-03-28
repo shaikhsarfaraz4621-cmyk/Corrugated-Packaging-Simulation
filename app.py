@@ -25,10 +25,14 @@ with st.sidebar:
         
     st.markdown("---")
     st.markdown("### 🛠️ Execution Controls")
-    num_runs = st.number_input("Number of Runs", min_value=1, max_value=50, value=3)
+    val = st.number_input("Number of Runs", min_value=1, max_value=50, value=st.session_state.get('num_runs', 3))
+    if val is not None:
+        st.session_state['num_runs'] = val
+    num_runs = st.session_state['num_runs']
+
     if st.button("🚀 Run Twin", type="primary", use_container_width=True):
         st.session_state['trigger_sim'] = True
-        st.session_state['num_runs'] = num_runs
+        # st.session_state['num_runs'] is already updated above
         
     if st.button("🔄 Factory Reset", use_container_width=True):
         st.session_state.clear()

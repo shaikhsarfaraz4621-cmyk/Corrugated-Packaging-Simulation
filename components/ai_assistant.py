@@ -50,43 +50,59 @@ def get_ai_context(results, machines_df):
         
     context = f"""
     You are an expert Factory Consultant for an industrial Corrugated Box manufacturing plant. 
-    Analyze the recent discrete-event simulation results detailing heavy human-oriented chaotic bottlenecks:
+    Analyze the recent discrete-event simulation results detailing heavy human-oriented chaotic bottlenecks.
     
     {stat_block}
     
+    VALID MACHINE IDs (Use these exactly for What-If scenarios): {machines_df['Machine_ID'].unique().tolist()}
     Resource Stats (Averages if Multi-run): {stats}
     
     Answer the user's questions strictly using this data. Emphasize how human unpredictable setups and constraints caused these bottlenecks.
+    When a user asks to "add" a machine, look at the current count in Resource Stats and increment it by 1 in your tool call.
+    Your "What-If" tool now runs 10 Statistical Iterations. Use the Mean values and the 95% Confidence Interval to determine if an improvement is truly significant or just statistical noise.
     """
     return context
 
 import json
-from engine import CorrugatedSimulation
+from controllers.simulation_runner import run_simulation_batch
 
 def _run_sim_for_tool(machines_df, jobs_df, routings_df, machine_id=None, new_count=None, new_buffer=None, new_forklifts=None):
     m_df = machines_df.copy()
-    forklift_count = new_forklifts if new_forklifts else 2
+    forklift_count = max(1, new_forklifts) if new_forklifts is not None else 2
     
-    if machine_id and machine_id in m_df['Machine_ID'].values:
-        if new_count is not None:
-            m_df.loc[m_df['Machine_ID'] == machine_id, 'Count'] = new_count
-        if new_buffer is not None:
-            m_df.loc[m_df['Machine_ID'] == machine_id, 'Input_Buffer_Capacity'] = new_buffer
+    target_row_idx = None
+    if machine_id:
+        # Fuzzy matching: try exact, then case-insensitive, then partial
+        m_ids = m_df['Machine_ID'].tolist()
+        if machine_id in m_ids:
+            target_row_idx = m_df.index[m_df['Machine_ID'] == machine_id][0]
+        else:
+            for idx, name in enumerate(m_ids):
+                if machine_id.lower() in name.lower():
+                    target_row_idx = m_df.index[idx]
+                    break
             
-    sim = CorrugatedSimulation(m_df, jobs_df, routings_df, forklift_count=forklift_count)
-    res = sim.run()
+    if target_row_idx is not None:
+        if new_count is not None:
+            m_df.at[target_row_idx, 'Count'] = max(1, new_count)
+        if new_buffer is not None:
+            m_df.at[target_row_idx, 'Input_Buffer_Capacity'] = max(1, new_buffer)
+            
+    # Run 10 Statistical Iterations to eliminate "Buffer Paradox" noise
+    _, results_agg = run_simulation_batch(m_df, jobs_df, routings_df, num_runs=10)
     
-    sts = res.get("Machine_Stats", {})
+    sts = results_agg.get("Machine_Stats", {})
     t_blocked = sum(m.get('blocked_time', 0) for m in sts.values())
     t_starved = sum(m.get('starved_time', 0) for m in sts.values())
-    lgs = res.get("Logs", pd.DataFrame())
-    t_jams = lgs[lgs["Event"] == "Jam Start"].shape[0] if not lgs.empty and "Event" in lgs.columns else 0
+    t_jams = results_agg["df_stats"]["Total_Jams"].mean()
     
     return json.dumps({
-        "Hypothetical_Makespan_Minutes": round(res["Total_Time"], 1),
+        "Hypothetical_Makespan_Minutes": round(results_agg["Total_Time"], 1),
         "Total_Blocked_Time": round(t_blocked, 1),
         "Total_Starved_Time": round(t_starved, 1),
-        "Total_Jams": t_jams
+        "Total_Jams": round(t_jams, 1),
+        "Confidence_Interval_95_Min": round(results_agg["MultiRunStats"]["Makespan"]["ci95"], 1),
+        "Simulation_Iterations": 10
     })
 
 tools_schema = [
@@ -100,19 +116,19 @@ tools_schema = [
                  "properties": {
                      "machine_id": {
                          "type": "string",
-                         "description": "Exact ID of the machine to modify (e.g. 'Corrugator', 'Slotter_Puncher', 'Stitcher', 'Bundling')"
+                         "description": "Exact ID of the machine to modify (e.g. 'Corrugator', 'Slotter_Puncher', 'Stitcher', 'Bundling'). Refer to VALID MACHINE IDs in context."
                      },
                      "new_count": {
                          "type": "integer",
-                         "description": "New requested quantity of units for this machine stage."
+                         "description": "New requested TOTAL units for this machine stage. Must be at least 1."
                      },
                      "new_buffer": {
                          "type": "integer",
-                         "description": "New physical queue capacity (WIP Buffer limit) right before this machine."
+                         "description": "New physical queue capacity (WIP Buffer limit) right before this machine. Must be at least 1."
                      },
                      "new_forklifts": {
                          "type": "integer",
-                         "description": "Total physical quantity of Forklifts operating globally on the factory floor."
+                         "description": "Total physical quantity of Forklifts operating globally. Must be at least 1."
                      }
                  }
              }
@@ -124,13 +140,21 @@ def get_deepseek_response(prompt, context, machines_df, jobs_df, routings_df):
     try:
         # Robust lookup: secrets.toml, then environment variable
         api_key = None
-        if "DEEPSEEK_API_KEY" in st.secrets:
-            api_key = st.secrets["DEEPSEEK_API_KEY"]
-        elif os.environ.get("DEEPSEEK_API_KEY"):
-            api_key = os.environ.get("DEEPSEEK_API_KEY")
+        
+        # Check all possible case permutations
+        for k in ["DEEPSEEK_API_KEY", "deepseek_api_key", "DeepSeek_API_Key"]:
+            if k in st.secrets:
+                api_key = st.secrets[k]
+                break
+            if os.environ.get(k):
+                api_key = os.environ.get(k)
+                break
             
         if not api_key: 
-            return "❌ No API key found. Please ensure 'DEEPSEEK_API_KEY' is set in .streamlit/secrets.toml or as an Environment Variable."
+            # Diagnostic for the user
+            found_secrets = list(st.secrets.keys())
+            found_env = [k for k in os.environ.keys() if "API" in k or "KEY" in k]
+            return f"❌ No API key found. Found Streamlit secret keys: {found_secrets}. Found ENV keys (with 'API/KEY'): {found_env}"
         client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
         sys_msgs = [{"role": "system", "content": context}]

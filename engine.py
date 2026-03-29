@@ -99,8 +99,8 @@ class CorrugatedSimulation:
         
         for _, row in self.machines_df.iterrows():
             m_id = row['Machine_ID']
-            count = int(row['Count'])
-            buffer_cap = int(row.get('Input_Buffer_Capacity', 5)) # Finite queues!
+            count = max(1, int(row['Count']))
+            buffer_cap = max(1, int(row.get('Input_Buffer_Capacity', 5))) # Finite queues!
             
             self.machines[m_id] = simpy.PriorityResource(self.env, capacity=count)
             self.buffers[m_id] = simpy.Store(self.env, capacity=buffer_cap)
